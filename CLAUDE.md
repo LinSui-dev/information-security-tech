@@ -19,9 +19,12 @@ python -m venv .venv
 # 全部测试（在仓库根目录）
 python -m unittest discover -s tests -v
 
-# 单个测试模块 / 单个用例
-python -m unittest tests.test_contracts -v
-python -m unittest tests.test_contracts.ContractsTests.test_frame_wire_format
+# 单个测试模块（用 -p 按文件名过滤）
+python -m unittest discover -s tests -p test_contracts.py -v
+python -m unittest discover -s tests -p test_bmp.py -v
+# 注意：不要用 `python -m unittest tests.test_xxx` 包式调用——部分机器 site-packages
+# 存在同名 `tests` 包会遮蔽本地目录；tests/ 下的测试文件导入夹具也须遵循
+# bmp_factory.py docstring 中的导入约定。
 
 # GUI 启动入口（必须以模块方式运行；导入 lsb_lab.ui 不得自动创建窗口）
 python -m lsb_lab.ui
