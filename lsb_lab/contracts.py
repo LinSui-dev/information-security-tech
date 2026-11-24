@@ -1,38 +1,37 @@
-"""基础模式 v1 的线格式与可复用计算。"""
-import struct
+from dataclasses import dataclass
 import zlib
-from .errors import CapacityError, InvalidPayloadError
-from .models import BmpImage, Capacity
 
-MAGIC = b"LSB1"
-VERSION = 1
-HEADER = struct.Struct("<4sBII")
-HEADER_BYTES = HEADER.size  # 13：magic + version + length + crc32
+FRAME_HEADER_SIZE = 13
+MAGIC = b"LSBv1"
 
+@dataclass(frozen=True)
+class StegoFrame:
+    payload_len: int
+    crc32: int
+    payload: bytes
 
-def capacity_for(image: BmpImage) -> Capacity:
-    whole_bytes = image.carrier_count // 8
-    return Capacity(image.carrier_count, HEADER_BYTES,
-                    max(0, whole_bytes - HEADER_BYTES), whole_bytes >= HEADER_BYTES)
+    @staticmethod
+    def pack(text: str) -> bytes:
+        payload = text.encode("utf-8")
+        payload_len = len(payload)
+        crc_val = zlib.crc32(payload) & 0xFFFFFFFF
+        header = payload_len.to_bytes(4, "little") + crc_val.to_bytes(4, "little") + MAGIC
+        return header + payload
 
-
-def encode_text(text: str, capacity: Capacity) -> bytes:
-    payload = text.encode("utf-8")
-    if not capacity.can_store_header or len(payload) > capacity.max_payload_bytes:
-        raise CapacityError("UTF-8 文本或帧头超过图片容量")
-    return payload
-
-
-def pack_header(payload: bytes) -> bytes:
-    return HEADER.pack(MAGIC, VERSION, len(payload), zlib.crc32(payload))
-
-
-def unpack_header(data: bytes, capacity: Capacity) -> tuple[int, int]:
-    if len(data) != HEADER_BYTES or not capacity.can_store_header:
-        raise InvalidPayloadError("载体无法容纳完整帧头")
-    magic, version, length, checksum = HEADER.unpack(data)
-    if magic != MAGIC or version != VERSION:
-        raise InvalidPayloadError("未识别的 LSB 标记或版本")
-    if length > capacity.max_payload_bytes:
-        raise InvalidPayloadError("帧中声明的文本长度超过载体容量")
-    return length, checksum
+    @staticmethod
+    def unpack(raw: bytes) -> "StegoFrame":
+        if len(raw) < FRAME_HEADER_SIZE:
+            raise ValueError("frame too short")
+        header = raw[:FRAME_HEADER_SIZE]
+        payload_len = int.from_bytes(header[0:4], "little")
+        crc_stored = int.from_bytes(header[4:8], "little")
+        magic = header[8:13]
+        if magic != MAGIC:
+            raise ValueError("invalid magic header, not LSBv1 frame")
+        if len(raw) < FRAME_HEADER_SIZE + payload_len:
+            raise ValueError("payload truncated")
+        payload = raw[FRAME_HEADER_SIZE: FRAME_HEADER_SIZE + payload_len]
+        crc_calc = zlib.crc32(payload) & 0xFFFFFFFF
+        if crc_calc != crc_stored:
+            raise ValueError("crc32 check failed")
+        return StegoFrame(payload_len, crc_stored, payload)
