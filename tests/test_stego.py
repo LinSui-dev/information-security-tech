@@ -1,112 +1,62 @@
-import pytest
+﻿import unittest
 import zlib
-from unittest.mock import patch
-from lsb_lab import stego
-from lsb_lab.contracts import StegoFrame
-from lsb_lab.errors import InvalidPayloadError
+from dataclasses import replace
+from lsb_lab import bmp, stego
+from lsb_lab.contracts import pack_header
+from lsb_lab.errors import CapacityError, InvalidPayloadError
+from bmp_factory import gray_image, color_image
 
-class MockBmpImage:
-    def __init__(self, carrier_pixel_count: int):
-        self._data = bytearray([0xAA] * carrier_pixel_count)
-    def copy(self):
-        return MockBmpImage(len(self._data))
-    def get_pixel_byte(self, offset: int) -> int:
-        return self._data[offset]
-    def set_pixel_byte(self, offset: int, value: int) -> None:
-        self._data[offset] = value & 0xFF
 
-def mock_iter_offsets(img: MockBmpImage):
-    return range(len(img._data))
+class StegoTests(unittest.TestCase):
+    def raw_frame(self, image, raw):
+        data = bytearray(image.raw_bytes)
+        for off, bit in zip(bmp.iter_carrier_offsets(image), stego._bytes_to_bits(raw)):
+            data[off] = (data[off] & 254) | bit
+        return replace(image, raw_bytes=bytes(data))
 
-@pytest.fixture(autouse=True)
-def patch_carrier_iter():
-    with patch("lsb_lab.bmp.iter_carrier_offsets", side_effect=mock_iter_offsets):
-        yield
+    def test_roundtrip(self):
+        for factory in (gray_image, color_image):
+            for text in ('', 'hello world', '中文\n😀 尾部  '):
+                with self.subTest(factory=factory.__name__, text=text):
+                    image = factory(32, 16)
+                    result = stego.extract_text(stego.embed_text(image, text))
+                    self.assertEqual(result.text, text)
+                    self.assertEqual(result.payload, text.encode())
+                    self.assertEqual(result.checksum, zlib.crc32(text.encode()))
 
-def test_embed_extract_basic():
-    img = MockBmpImage(500)
-    msg = "hello world"
-    s = stego.embed_text(img, msg)
-    assert stego.extract_text(s) == msg
+    def test_capacity(self):
+        image = gray_image(16, 8)
+        self.assertEqual(stego.extract_text(stego.embed_text(image, '中')).text, '中')
+        for image, text in ((image, '中a'), (gray_image(4, 2), ''), (gray_image(4, 4), '')):
+            with self.assertRaises(CapacityError):
+                stego.embed_text(image, text)
 
-def test_embed_extract_empty_text():
-    # 空消息帧=13字节=104bit，像素>=104
-    img = MockBmpImage(110)
-    s = stego.embed_text(img, "")
-    assert stego.extract_text(s) == ""
+    def test_wire_order_and_preservation(self):
+        image = color_image(16, 8, bytes(range(256)) + bytes(range(128)))
+        original = image.raw_bytes
+        result = stego.embed_text(image, 'a')
+        start = image.pixel_offset
+        self.assertEqual(result.raw_bytes[start:start+6], bytes([0, 1, 2, 2, 5, 5]))
+        self.assertEqual(image.raw_bytes, original)
+        self.assertEqual(result.raw_bytes[:start], original[:start])
+        used = (13 + 1) * 8
+        self.assertEqual(result.raw_bytes[start+used:], original[start+used:])
+        self.assertTrue(all((a ^ b) <= 1 for a, b in zip(original, result.raw_bytes)))
 
-def test_embed_extract_cn_emoji_newline_space():
-    img = MockBmpImage(800)
-    msg = "测试中文\n😀 末尾空格   "
-    s = stego.embed_text(img, msg)
-    assert stego.extract_text(s) == msg
+    def test_invalid_frames(self):
+        image = gray_image(32, 16)
+        valid = pack_header(b'abc') + b'abc'
+        invalid = [b'BAD!' + valid[4:], valid[:4] + b'\x02' + valid[5:],
+                   valid[:5] + (99999).to_bytes(4, 'little') + valid[9:],
+                   valid[:-1] + b'd', pack_header(b'\xff') + b'\xff']
+        for raw in invalid:
+            with self.subTest(raw=raw), self.assertRaises(InvalidPayloadError):
+                stego.extract_text(self.raw_frame(image, raw))
+        with self.assertRaises(InvalidPayloadError):
+            stego.extract_text(gray_image(4, 2))
 
-def test_capacity_exact_boundary():
-    msg = "A" * 20
-    frame = StegoFrame.pack(msg)
-    need_bits = len(frame)*8
-    img = MockBmpImage(need_bits)
-    s = stego.embed_text(img, msg)
-    assert stego.extract_text(s) == msg
-
-def test_capacity_insufficient_raise():
-    msg = "A" * 100
-    frame = StegoFrame.pack(msg)
-    need_bits = len(frame)*8
-    img = MockBmpImage(need_bits - 1)
-    with pytest.raises(InvalidPayloadError) as exc:
-        stego.embed_text(img, msg)
-    assert "carrier space insufficient" in str(exc.value)
-
-def test_crc_tamper_raise():
-    img = MockBmpImage(500)
-    msg = "secret"
-    s = stego.embed_text(img, msg)
-    s._data[2] ^= 0x01
-    with pytest.raises(InvalidPayloadError) as exc:
-        stego.extract_text(s)
-    assert "crc32 check failed" in str(exc.value)
-
-def test_invalid_magic_raise():
-    img = MockBmpImage(500)
-    bad = b"\x05\x00\x00\x00" + b"\x00\x00\x00\x00" + b"BADXX" + b"abcde"
-    bits = []
-    for b in bad:
-        for i in range(8):
-            bits.append((b >> i) & 1)
-    for idx, bit in enumerate(bits):
-        pix = img.get_pixel_byte(idx)
-        img.set_pixel_byte(idx, (pix & 0xFE) | bit)
-    with pytest.raises(InvalidPayloadError):
-        stego.extract_text(img)
-
-def test_unused_bytes_unchanged():
-    img = MockBmpImage(500)
-    msg = "abc"
-    s = stego.embed_text(img, msg)
-    frame = StegoFrame.pack(msg)
-    used_bits = len(frame)*8
-    for off in range(used_bits, len(img._data)):
-        assert s._data[off] == img._data[off]
-
-def test_invalid_utf8_payload_raise():
-    img = MockBmpImage(500)
-    bad_payload = b"\xff\xfe\xfd"
-    crc = zlib.crc32(bad_payload)&0xFFFFFFFF
-    raw = len(bad_payload).to_bytes(4,"little") + crc.to_bytes(4,"little") + b"LSBv1" + bad_payload
-    bits = []
-    for b in raw:
-        for i in range(8):
-            bits.append((b >> i) & 1)
-    for idx, bit in enumerate(bits):
-        pix = img.get_pixel_byte(idx)
-        img.set_pixel_byte(idx, (pix & 0xFE) | bit)
-    with pytest.raises(InvalidPayloadError) as exc:
-        stego.extract_text(img)
-    assert "payload is not valid utf-8" in str(exc.value)
-
-def test_original_image_not_modified():
-    img = MockBmpImage(500)
-    orig = bytes(img._data)
-    _ = stego.embed_text(img, "test")
-    assert bytes(img._data) == orig
+    def test_small_teaching_bits(self):
+        for width, height, payload in ((4, 2, b'?'), (4, 4, b'?S')):
+            image = self.raw_frame(gray_image(width, height), payload)
+            bits = (image.raw_bytes[o] & 1 for o in bmp.iter_carrier_offsets(image))
+            self.assertEqual(stego._bits_to_bytes(bits), payload)

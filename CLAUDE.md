@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 信息安全课程实验：LSB 信息隐藏（BMP 载体隐写），三人协作开发骨架。Python 3.11+，运行阶段仅标准库 + Tkinter；自行解析 BMP 二进制，**禁止引入 Pillow/OpenCV 等图片库**。支持未压缩 8 位灰度与 24 位真彩 BMP，≤512×512，宽为 4 的倍数。
 
-共享契约（models/contracts/errors）已实现；`bmp.py`、`stego.py`、`controller.py`、`ui.py` 主动抛 `NotImplementedError`——这是明确的开发边界，不是待填充的空成功桩，也不属于业务异常。
+BMP、LSB、控制器和 Tkinter UI 已实现。集成修复与验证范围见 docs/validation.md；基础运行和测试仅需标准库，GUI 测试需要桌面。
 
 所有设计约束在 `docs/`：`architecture.md`（契约主文档）、`integration.md`（联调细则与验收向量，**冲突时优先级与 architecture 相同**）、`development.md`（分工）、`data-design.md`。修改共享接口前先阅读；出现冲突时停止修改，由三人共同确认。models/errors/contracts/docs 的修改须三人确认。
 

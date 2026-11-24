@@ -1,6 +1,6 @@
 # LSB 信息隐藏课程实验
 
-三人协作开发骨架，仅覆盖基础功能的架构和接口，尚未实现 BMP 读写、嵌入提取和图形界面。
+三人协作的 LSB 基础应用，已实现 BMP 读写、信息嵌入提取、Tkinter 界面和集成测试。
 
 ## 技术约定
 
@@ -31,4 +31,6 @@ python -m venv .venv
 | 三 | `lsb_lab/controller.py`、`lsb_lab/ui.py`、集成测试 | 状态管理、界面与联调 |
 | 共同维护 | `models.py`、`contracts.py`、`errors.py`、`docs/` | 接口、数据格式及实验记录 |
 
-`tests/test_contracts.py` 验证已有共享契约，不代表功能已完成。各模块当前主动抛出 `NotImplementedError`，避免将空实现当成成功。
+运行界面：`python -m lsb_lab.ui`。打开原图、输入文本、嵌入并另存载体后，可从磁盘文件提取，不需要原图。
+
+测试仅使用标准库，Tk 控件测试需要图形桌面。当前不包含噪声、JPEG、剪裁和带密钥扩展。验证范围及集成修复见 [验证记录](docs/validation.md)。

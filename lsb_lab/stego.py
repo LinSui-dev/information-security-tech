@@ -1,90 +1,56 @@
-from typing import Iterator
+﻿"""顺序 LSB v1：使用共享 BMP 模型和固定帧协议。"""
+from collections.abc import Iterator
+from dataclasses import replace
+from itertools import islice
+import zlib
 from . import bmp
-from .contracts import StegoFrame, FRAME_HEADER_SIZE, MAGIC
+from .contracts import HEADER_BYTES, capacity_for, encode_text, pack_header, unpack_header
 from .errors import InvalidPayloadError
+from .models import BmpImage, ExtractionResult
 
 
-def _bytes_to_bits(bs: bytes) -> Iterator[int]:
-    """字节转比特流：bit0(最低位) 先输出，bit7最后输出"""
-    for b in bs:
-        for i in range(8):
-            yield (b >> i) & 1
+def _bytes_to_bits(data: bytes) -> Iterator[int]:
+    for value in data:
+        for shift in range(7, -1, -1):
+            yield (value >> shift) & 1
 
 
 def _bits_to_bytes(bits: Iterator[int]) -> bytes:
-    buf = bytearray()
-    current_byte = 0
-    bit_pos = 0
+    result = bytearray()
+    value = count = 0
     for bit in bits:
-        current_byte |= (bit & 1) << bit_pos
-        bit_pos += 1
-        if bit_pos == 8:
-            buf.append(current_byte)
-            current_byte = 0
-            bit_pos = 0
-    return bytes(buf)
+        value = (value << 1) | (bit & 1)
+        count += 1
+        if count == 8:
+            result.append(value)
+            value = count = 0
+    if count:
+        raise InvalidPayloadError("载体数据不足一个完整字节")
+    return bytes(result)
 
 
-def embed_text(img: bmp.BmpImage, text: str) -> bmp.BmpImage:
-    """
-    将文本嵌入载体LSB，返回全新BmpImage，原图不修改
-    仅依赖 bmp.iter_carrier_offsets 获取载体位置
-    """
+def embed_text(image: BmpImage, text: str) -> BmpImage:
+    payload = encode_text(text, capacity_for(image))
+    data = bytearray(image.raw_bytes)
+    for offset, bit in zip(bmp.iter_carrier_offsets(image),
+                           _bytes_to_bits(pack_header(payload) + payload)):
+        data[offset] = (data[offset] & 0xFE) | bit
+    return replace(image, raw_bytes=bytes(data))
+
+
+def extract_text(image: BmpImage) -> ExtractionResult:
+    offsets = iter(bmp.iter_carrier_offsets(image))
+    def read_bytes(count: int) -> bytes:
+        raw = _bits_to_bytes(image.raw_bytes[o] & 1 for o in islice(offsets, count * 8))
+        if len(raw) != count:
+            raise InvalidPayloadError("载体数据截断")
+        return raw
+    length, checksum = unpack_header(read_bytes(HEADER_BYTES), capacity_for(image))
+    payload = read_bytes(length)
+    if zlib.crc32(payload) != checksum:
+        raise InvalidPayloadError("正文 CRC32 校验失败")
     try:
-        frame_bytes = StegoFrame.pack(text)
-    except Exception as e:
-        raise InvalidPayloadError(f"frame pack failed: {e}") from e
-
-    offsets = list(bmp.iter_carrier_offsets(img))
-    total_bits = len(offsets)
-    required_bits = len(frame_bytes) * 8
-    if required_bits > total_bits:
-        raise InvalidPayloadError("carrier space insufficient")
-
-    new_img = img.copy()
-    bit_stream = _bytes_to_bits(frame_bytes)
-
-    for idx, bit in enumerate(bit_stream):
-        offset = offsets[idx]
-        orig = new_img.get_pixel_byte(offset)
-        new_val = (orig & 0xFE) | (bit & 1)
-        new_img.set_pixel_byte(offset, new_val)
-    return new_img
-
-
-def extract_text(img: bmp.BmpImage) -> str:
-    """
-    从载体提取v1帧，校验协议，返回utf8文本
-    所有校验失败抛出 InvalidPayloadError
-    """
-    offsets = list(bmp.iter_carrier_offsets(img))
-    total_bits = len(offsets)
-    header_bits = FRAME_HEADER_SIZE * 8
-    if total_bits < header_bits:
-        raise InvalidPayloadError("not enough bits for frame header")
-
-    # 读取【头部13字节】比特流，单独解析头部，不再调用unpack！
-    header_bit_iter = (img.get_pixel_byte(offsets[i]) & 1 for i in range(header_bits))
-    header_raw = _bits_to_bytes(header_bit_iter)
-    payload_len = int.from_bytes(header_raw[0:4], "little")
-    crc_stored = int.from_bytes(header_raw[4:8], "little")
-    magic = header_raw[8:13]
-    if magic != MAGIC:
-        raise InvalidPayloadError("header parse fail: invalid magic header, not LSBv1 frame")
-
-    full_frame_bits = (FRAME_HEADER_SIZE + payload_len) * 8
-    if total_bits < full_frame_bits:
-        raise InvalidPayloadError("carrier too short for full payload")
-
-    # 读取完整帧比特，交给unpack校验
-    full_bit_iter = (img.get_pixel_byte(offsets[i]) & 1 for i in range(full_frame_bits))
-    full_raw = _bits_to_bytes(full_bit_iter)
-    try:
-        frame = StegoFrame.unpack(full_raw)
-    except ValueError as e:
-        raise InvalidPayloadError(f"frame invalid: {e}") from e
-
-    try:
-        return frame.payload.decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise InvalidPayloadError("payload is not valid utf-8") from e
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InvalidPayloadError("正文不是有效的 UTF-8") from exc
+    return ExtractionResult(text, payload, checksum)
