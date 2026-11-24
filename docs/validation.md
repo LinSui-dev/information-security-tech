@@ -2,7 +2,7 @@
 
 ## 合并来源
 
-本地 main 合并 origin/feat/bmp（30dd894）和 origin/feat/stego（76949a2）。保留分支提交历史；未推送此次集成到远程。
+main 合并 origin/feat/bmp（30dd894）和 origin/feat/stego（76949a2），保留分支提交历史。基础集成提交为 b3ac91d，随后随界面及分工文档一并发布到远程 main。
 
 ## 集成时发现并修复
 
@@ -28,3 +28,7 @@
 - computer-use 查看了实际加载和提取完成的窗口：图像、文本和容量显示正常；已保存截图 output/ui-verified.png。
 
 本地输出 output/ 中提供 gray.bmp、color.bmp、color-stego.bmp、界面截图及 test-results.txt（Git 忽略）。这些是确定性合成样例，不是课程提供图片。完整四项附加实验不在本次范围内。
+
+## 窗口调整
+
+默认客户区为 960×540，对应 1920×1080 屏幕的四分之一面积（标题栏和边框另计），居中打开；Windows 启用 DPI 感知。两列图片等宽，文本区增加滚动条，操作按钮增加步骤编号。已查看实际窗口，截图 output/ui-960x540.png；调整后完整 92 项测试再次通过。

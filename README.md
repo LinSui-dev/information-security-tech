@@ -33,4 +33,8 @@ python -m venv .venv
 
 运行界面：`python -m lsb_lab.ui`。打开原图、输入文本、嵌入并另存载体后，可从磁盘文件提取，不需要原图。
 
+默认窗口客户区为 960×540，居中打开，适配 1080p 屏幕四分之一面积；支持手动调整窗口大小。
+
+后续扩展开发参见 [两人并行分工](docs/extensions-assignment.md)、[成员一提示词](docs/prompt-member1.md) 和 [成员二提示词](docs/prompt-member2.md)。
+
 测试仅使用标准库，Tk 控件测试需要图形桌面。当前不包含噪声、JPEG、剪裁和带密钥扩展。验证范围及集成修复见 [验证记录](docs/validation.md)。

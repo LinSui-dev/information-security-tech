@@ -1,5 +1,6 @@
 ﻿"""Tkinter 基础功能界面；导入本模块不创建窗口。"""
 import tkinter as tk
+import sys
 from tkinter import ttk, filedialog, messagebox
 from .controller import LabController
 from .contracts import capacity_for
@@ -8,26 +9,29 @@ from .errors import LabError
 
 class LabApp(ttk.Frame):
     def __init__(self, master: tk.Tk, controller: LabController | None = None):
-        super().__init__(master, padding=12)
+        super().__init__(master, padding=10)
         self.controller = controller or LabController()
         self._refreshing = False
         self._images = {}
         self.pack(fill="both", expand=True)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
         master.title("LSB 信息隐藏 · 基础实验")
         master.protocol("WM_DELETE_WINDOW", self.close)
         toolbar = ttk.Frame(self)
-        toolbar.pack(fill="x", pady=(0, 10))
-        ttk.Button(toolbar, text="打开原图", command=self.open_source).pack(side="left", padx=4)
-        self.embed_button = ttk.Button(toolbar, text="嵌入信息", command=self.embed)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(toolbar, text="① 打开原图", command=self.open_source).pack(side="left", padx=4)
+        self.embed_button = ttk.Button(toolbar, text="② 嵌入信息", command=self.embed)
         self.embed_button.pack(side="left", padx=4)
-        self.save_button = ttk.Button(toolbar, text="另存载体 BMP", command=self.save)
+        self.save_button = ttk.Button(toolbar, text="③ 另存 BMP", command=self.save)
         self.save_button.pack(side="left", padx=4)
-        ttk.Button(toolbar, text="从文件提取", command=self.extract).pack(side="left", padx=4)
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=12)
+        ttk.Button(toolbar, text="从 BMP 文件提取", command=self.extract).pack(side="left", padx=4)
         self.capacity_label = ttk.Label(self)
-        self.capacity_label.pack(anchor="w", pady=(0, 8))
+        self.capacity_label.grid(row=1, column=0, sticky="w", pady=(0, 8))
         pictures = ttk.Frame(self)
-        pictures.pack(fill="both", expand=True)
-        pictures.columnconfigure((0, 1), weight=1)
+        pictures.grid(row=2, column=0, sticky="nsew")
+        pictures.columnconfigure((0, 1), weight=1, uniform="pictures")
         pictures.rowconfigure(0, weight=1)
         self.source_frame = ttk.LabelFrame(pictures, text="原图", padding=5)
         self.result_frame = ttk.LabelFrame(pictures, text="结果", padding=5)
@@ -36,21 +40,29 @@ class LabApp(ttk.Frame):
         self.source_canvas = self._canvas(self.source_frame)
         self.result_canvas = self._canvas(self.result_frame)
         text_area = ttk.Frame(self)
-        text_area.pack(fill="x", pady=(10, 0))
-        text_area.columnconfigure((0, 1), weight=1)
-        ttk.Label(text_area, text="输入文本（UTF-8，保留换行和空格）").grid(row=0, column=0, sticky="w")
+        text_area.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        text_area.columnconfigure((0, 1), weight=1, uniform="texts")
+        ttk.Label(text_area, text="待嵌入文本 · UTF-8").grid(row=0, column=0, sticky="w")
         ttk.Label(text_area, text="提取结果（只读）").grid(row=0, column=1, sticky="w")
-        self.input = tk.Text(text_area, height=6, width=48, wrap="word", undo=True)
-        self.output = tk.Text(text_area, height=6, width=48, wrap="word", state="disabled")
-        self.input.grid(row=1, column=0, sticky="ew", padx=(0, 5))
-        self.output.grid(row=1, column=1, sticky="ew", padx=(5, 0))
+        input_frame = ttk.Frame(text_area)
+        output_frame = ttk.Frame(text_area)
+        input_frame.grid(row=1, column=0, sticky="ew", padx=(0, 5))
+        output_frame.grid(row=1, column=1, sticky="ew", padx=(5, 0))
+        self.input = tk.Text(input_frame, height=4, width=1, wrap="word", undo=True, padx=6, pady=4)
+        self.output = tk.Text(output_frame, height=4, width=1, wrap="word", state="disabled", padx=6, pady=4)
+        for frame, widget in ((input_frame, self.input), (output_frame, self.output)):
+            scrollbar = ttk.Scrollbar(frame, orient="vertical", command=widget.yview)
+            widget.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side="right", fill="y")
+            widget.pack(side="left", fill="x", expand=True)
         self.input.bind("<<Modified>>", self._input_changed)
         self.status = ttk.Label(self, text="请选择 BMP 原图，或直接从载体文件提取。")
-        self.status.pack(anchor="w", pady=(8, 0))
+        self.status.grid(row=4, column=0, sticky="w", pady=(8, 0))
         self.refresh()
 
     def _canvas(self, parent):
-        canvas = tk.Canvas(parent, width=400, height=300, background="#eeeeee", highlightthickness=0)
+        canvas = tk.Canvas(parent, width=1, height=1, background="#eeeeee", highlightthickness=0)
+        canvas.bind("<Configure>", lambda event: self._center_placeholder(canvas))
         xbar = ttk.Scrollbar(parent, orient="horizontal", command=canvas.xview)
         ybar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(xscrollcommand=xbar.set, yscrollcommand=ybar.set)
@@ -60,6 +72,10 @@ class LabApp(ttk.Frame):
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
         return canvas
+
+    def _center_placeholder(self, canvas):
+        if canvas.find_withtag("placeholder"):
+            canvas.coords("placeholder", canvas.winfo_width() / 2, canvas.winfo_height() / 2)
 
     def _confirm_discard(self):
         return not self.controller.state.dirty or messagebox.askokcancel(
@@ -109,8 +125,9 @@ class LabApp(ttk.Frame):
                 canvas.delete("all")
                 if preview is None:
                     self._images.pop(key, None)
-                    canvas.configure(scrollregion=(0, 0, 400, 300))
-                    canvas.create_text(180, 130, text="未加载图片", fill="#666666")
+                    canvas.configure(scrollregion=(0, 0, 0, 0))
+                    canvas.create_text(0, 0, text="未加载图片", fill="#666666", tags="placeholder")
+                    self._center_placeholder(canvas)
                 else:
                     photo = tk.PhotoImage(master=self, data=preview.ppm_bytes, format="PPM")
                     self._images[key] = photo
@@ -164,9 +181,15 @@ class LabApp(ttk.Frame):
 
 
 def main():
+    # 使用物理像素计量，避免 Windows 缩放将 960×540 放大到超过四分之一屏。
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
     root = tk.Tk()
-    root.minsize(800, 600)
-    root.geometry("1040x760")
+    root.minsize(800, 480)
+    x = max(0, (root.winfo_screenwidth() - 960) // 2)
+    y = max(0, (root.winfo_screenheight() - 540) // 2)
+    root.geometry(f"960x540+{x}+{y}")
     LabApp(root)
     root.mainloop()
 
